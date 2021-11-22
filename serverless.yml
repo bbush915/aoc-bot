@@ -1,0 +1,81 @@
+service: aoc-bot
+
+frameworkVersion: "2"
+
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  lambdaHashingVersion: 20201221
+  environment:
+    AOC_LEADERBOARD_ID: ${env:AOC_LEADERBOARD_ID}
+    AOC_SESSION_COOKIE: ${env:AOC_SESSION_COOKIE}
+    AOC_YEAR: ${env:AOC_YEAR}
+    SLACK_AOC_ADMIN_ID: ${env:SLACK_AOC_ADMIN_ID}
+    SLACK_SIGNING_SECRET: ${env:SLACK_SIGNING_SECRET}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:UpdateItem
+          Resource:
+            - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/aoc-user-translation
+            - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/aoc-manual-timing
+
+plugins:
+  - serverless-plugin-typescript
+
+functions:
+  register:
+    name: ${sls:stage}-register
+    handler: src/handler.register
+    events:
+      - httpApi:
+          path: /aoc/register
+          method: post
+  manualStart:
+    name: ${sls:stage}-manual-start
+    handler: src/handler.manualStart
+    events:
+      - httpApi:
+          path: /aoc/manual-start
+          method: post
+  shareLeaderboard:
+    name: ${sls:stage}-leaderboard
+    handler: src/handler.leaderboard
+    events:
+      - httpApi:
+          path: /aoc/leaderboard
+          method: post
+
+resources:
+  Resources:
+    UserTranslationTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: aoc-user-translation
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        KeySchema: [{ AttributeName: SlackId, KeyType: HASH }]
+        AttributeDefinitions: [{ AttributeName: SlackId, AttributeType: "S" }]
+    ManualTimingTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: aoc-manual-timing
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 10
+          WriteCapacityUnits: 1
+        KeySchema:
+          [{ AttributeName: DayNumber, KeyType: HASH }, { AttributeName: MemberId, KeyType: RANGE }]
+        AttributeDefinitions:
+          [
+            { AttributeName: DayNumber, AttributeType: "N" },
+            { AttributeName: MemberId, AttributeType: "S" },
+          ]
