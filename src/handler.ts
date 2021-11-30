@@ -1,304 +1,273 @@
 import { DynamoDB } from "@aws-sdk/client-dynamodb";
-import { APIGatewayProxyEvent, APIGatewayProxyHandler } from "aws-lambda";
+import { APIGatewayProxyEvent, APIGatewayProxyHandler, ProxyResult } from "aws-lambda";
 import axios from "axios";
 import { createHmac, timingSafeEqual } from "crypto";
 
-type Leaderboard = {
-  members: Record<string, MemberStatistics>;
-  event: string;
-  owner_id: string;
-};
+import { Leaderboard, ManualTiming } from "types";
 
-type MemberStatistics = {
-  id: string;
-  local_score: number;
-  stars: number;
-  last_star_ts: number | string;
-  name: string;
-  global_score: number;
-  completion_day_level: Record<string, DailyCompletionStatistics>;
-};
-
-type DailyCompletionStatistics = {
-  "1": { get_star_ts: number };
-  "2"?: { get_star_ts: number };
-};
-
-type ManualTiming = {
-  member_id: string;
-  start_ts: number;
-};
-
-// NOTE - Advent of Code starts December 1st at 12 AM EST / UTC-5.
+// NOTE - Advent of Code starts December 1st at 12 AM EST / UTC-5
 
 const EVENT_START_TIMESTAMP = new Date(Number(process.env.AOC_YEAR!), 11, 1, 5, 0, 0, 0).getTime();
 
 export const register: APIGatewayProxyHandler = (event) =>
   handleSlackRequest(event, async (params) => {
-    const slackId = params.get("user_id")!;
-    const aocId = params.get("text")!;
+    try {
+      const slackId = params.get("user_id")!;
+      const aocId = params.get("text")!;
 
-    // NOTE - Update the translation for the user.
+      // NOTE - Update the translation for the user.
 
-    const dbClient = new DynamoDB({});
+      const dbClient = new DynamoDB({});
 
-    await dbClient.updateItem({
-      TableName: "aoc-user-translation",
-      Key: { SlackId: { S: slackId } },
-      UpdateExpression: "SET AocId = :AocId",
-      ExpressionAttributeValues: {
-        ":AocId": { S: aocId },
-      },
-    });
+      await dbClient.updateItem({
+        TableName: "aoc-user-translation",
+        Key: { SlackId: { S: slackId } },
+        UpdateExpression: "SET AocId = :AocId",
+        ExpressionAttributeValues: {
+          ":AocId": { S: aocId },
+        },
+      });
 
-    return {
-      statusCode: 200,
-      body: "Registered successfully!",
-    };
+      return {
+        statusCode: 200,
+        body: "Registered successfully!",
+      };
+    } catch (error) {
+      console.error(error);
+
+      return Promise.resolve({
+        statusCode: 200,
+        body: "Something went wrong. Please try again later.",
+      });
+    }
   });
 
 export const manualStart: APIGatewayProxyHandler = (event) =>
   handleSlackRequest(event, async (params) => {
-    const slackId = params.get("user_id")!;
-    let day = params.get("text")!;
+    try {
+      const slackId = params.get("user_id")!;
+      let day = params.get("text")!;
 
-    const now = new Date().getTime();
+      const now = new Date().getTime();
 
-    // NOTE - If we don't provide a day, calculate it from the offset to the
-    // start of the event.
+      // NOTE - If we don't provide a day, calculate it from the offset to the
+      // start of the event.
 
-    if (!day) {
-      day = String(1 + Math.floor((now - EVENT_START_TIMESTAMP) / (24 * 60 * 60 * 1000)));
-    }
+      if (!day) {
+        day = String(1 + Math.floor((now - EVENT_START_TIMESTAMP) / (24 * 60 * 60 * 1000)));
+      }
 
-    // NOTE - Grab the translation for the user.
+      // NOTE - Grab the translation for the user.
 
-    const dbClient = new DynamoDB({});
+      const dbClient = new DynamoDB({});
 
-    const userTranslationData = await dbClient.getItem({
-      TableName: "aoc-user-translation",
-      Key: { SlackId: { S: slackId } },
-      ProjectionExpression: "AocId",
-    });
+      const userTranslationData = await dbClient.getItem({
+        TableName: "aoc-user-translation",
+        Key: { SlackId: { S: slackId } },
+        ProjectionExpression: "AocId",
+      });
 
-    if (!userTranslationData.Item) {
-      throw new Error(`Unable to locate translation for user: [Slack ID: ${slackId}]`);
-    }
+      if (!userTranslationData.Item) {
+        throw new Error(`Unable to locate translation for user: [Slack ID: ${slackId}]`);
+      }
 
-    // NOTE - Update the manual start time for the user for the day.
+      // NOTE - Update the manual start time for the user for the day.
 
-    const aocId = userTranslationData.Item.AocId.S!;
+      const aocId = userTranslationData.Item.AocId.S!;
 
-    await dbClient.updateItem({
-      TableName: "aoc-manual-timing",
-      Key: { DayNumber: { N: day }, MemberId: { S: aocId } },
-      UpdateExpression: "SET StartTimestamp = :StartTimestamp",
-      ExpressionAttributeValues: {
-        ":StartTimestamp": { N: String(now) },
-      },
-    });
+      await dbClient.updateItem({
+        TableName: "aoc-manual-timing",
+        Key: { DayNumber: { N: day }, MemberId: { S: aocId } },
+        UpdateExpression: "SET StartTimestamp = :StartTimestamp",
+        ExpressionAttributeValues: {
+          ":StartTimestamp": { N: String(now) },
+        },
+      });
 
-    // NOTE - Inform the user that they can begin!
+      // NOTE - Inform the user that they can begin!
 
-    return {
-      statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `:clipboard: Recorded your *Day ${day}* start time as: *<!date^${Math.floor(
-                now / 1000
-              )}^{date} {time_secs}|Unable to Parse Timestamp>*\n\n:runner: You can now begin: https://adventofcode.com/${process
-                .env.AOC_YEAR!}/day/${day}`,
+      return {
+        statusCode: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `:clipboard: Recorded your *Day ${day}* start time as: *<!date^${Math.floor(
+                  now / 1000
+                )}^{date} {time_secs}|Unable to Parse Timestamp>*\n\n:runner: You can now begin: https://adventofcode.com/${process
+                  .env.AOC_YEAR!}/day/${day}`,
+              },
             },
-          },
-        ],
-      }),
-    };
+          ],
+        }),
+      };
+    } catch (error) {
+      console.error(error);
+
+      return Promise.resolve({
+        statusCode: 200,
+        body: "Something went wrong. Please try again later.",
+      });
+    }
   });
 
 export const leaderboard: APIGatewayProxyHandler = (event) =>
   handleSlackRequest(event, async (params) => {
-    const slackId = params.get("user_id")!;
-    let day = params.get("text")!;
+    try {
+      const slackId = params.get("user_id")!;
+      let day = params.get("text")!;
 
-    const now = new Date().getTime();
+      const now = new Date().getTime();
 
-    // NOTE - If we don't provide a day, calculate it from the offset to the
-    // start of the event.
+      // NOTE - If we don't provide a day, calculate it from the offset to the
+      // start of the event.
 
-    if (!day) {
-      day = String(1 + Math.floor((now - EVENT_START_TIMESTAMP) / (24 * 60 * 60 * 1000)));
-    }
-
-    // NOTE - Advent of Code requests that you do not request your leaderboard
-    // JSON more than once per 15 minutes. To prevent accidental spam by users,
-    // this command is locked down to the specified admin user ("facilitator").
-
-    if (slackId !== process.env.SLACK_AOC_ADMIN_ID!) {
-      return {
-        statusCode: 200,
-        body: "Due to API restrictions, only your Advent of Code facilitator can use this command",
-      };
-    }
-
-    // NOTE - Get leaderboard JSON.
-
-    const response = await axios.get(
-      `https://adventofcode.com/${process.env.AOC_YEAR}/leaderboard/private/view/${process.env.AOC_LEADERBOARD_ID}.json`,
-      {
-        headers: {
-          Cookie: `session=${process.env.AOC_SESSION_COOKIE};`,
-        },
+      if (!day) {
+        day = String(1 + Math.floor((now - EVENT_START_TIMESTAMP) / (24 * 60 * 60 * 1000)));
       }
-    );
 
-    const leaderboard: Leaderboard = response.data;
+      // NOTE - Advent of Code requests that you do not request your leaderboard
+      // JSON more than once per 15 minutes. To prevent accidental spam by users,
+      // this command is locked down to the specified admin user ("facilitator").
 
-    // NOTE - Get any manual start times for the given day.
+      if (slackId !== process.env.SLACK_AOC_ADMIN_ID!) {
+        return {
+          statusCode: 200,
+          body: "Due to API restrictions, only your Advent of Code facilitator can use this command",
+        };
+      }
 
-    const dbClient = new DynamoDB({});
+      // NOTE - Get leaderboard JSON.
 
-    const manualTimingData = await dbClient.query({
-      TableName: "aoc-manual-timing",
-      KeyConditionExpression: "DayNumber = :DayNumber",
-      ExpressionAttributeValues: {
-        ":DayNumber": { N: String(day) },
-      },
-      ProjectionExpression: "MemberId,StartTimestamp",
-    });
+      const response = await axios.get(
+        `https://adventofcode.com/${process.env.AOC_YEAR}/leaderboard/private/view/${process.env.AOC_LEADERBOARD_ID}.json`,
+        {
+          headers: {
+            Cookie: `session=${process.env.AOC_SESSION_COOKIE};`,
+          },
+        }
+      );
 
-    const manualTimings: ManualTiming[] = manualTimingData.Items!.map((item) => ({
-      member_id: item.MemberId.S!,
-      start_ts: Number(item.StartTimestamp.N!),
-    }));
+      const leaderboard: Leaderboard = response.data;
 
-    // NOTE - Calculate leaderboard statistics.
+      // NOTE - Get any manual start times for the given day.
 
-    const leaderboardStatistics = calculateLeaderboardStatistics(
-      Number(day),
-      leaderboard,
-      manualTimings
-    );
+      const dbClient = new DynamoDB({});
 
-    const overallLeaders = leaderboardStatistics
-      .sort((x, y) => {
+      const manualTimingData = await dbClient.query({
+        TableName: "aoc-manual-timing",
+        KeyConditionExpression: "DayNumber = :DayNumber",
+        ExpressionAttributeValues: {
+          ":DayNumber": { N: String(day) },
+        },
+        ProjectionExpression: "MemberId,StartTimestamp",
+      });
+
+      const manualTimings: ManualTiming[] = manualTimingData.Items!.map((item) => ({
+        member_id: item.MemberId.S!,
+        start_ts: Number(item.StartTimestamp.N!),
+      }));
+
+      // NOTE - Calculate leaderboard statistics.
+
+      const leaderboardStatistics = calculateLeaderboardStatistics(
+        Number(day),
+        leaderboard,
+        manualTimings
+      );
+
+      const overallLeaders = leaderboardStatistics.sort((x, y) => {
         if (x.stars === y.stars) {
           return x.lastStarTimestamp - y.lastStarTimestamp;
         }
 
         return y.stars - x.stars;
-      })
-      .slice(0, 3);
+      });
 
-    const dailyLeaders = leaderboardStatistics
-      .filter((x) => x.totalDuration > 0)
-      .sort((x, y) => {
-        if (x.dailyStars === y.dailyStars) {
-          return x.totalDuration - y.totalDuration;
-        }
+      const dailyLeaders = leaderboardStatistics
+        .filter((x) => x.totalDuration > 0)
+        .sort((x, y) => {
+          if (x.dailyStars === y.dailyStars) {
+            return x.totalDuration - y.totalDuration;
+          }
 
-        return y.dailyStars - x.dailyStars;
-      })
-      .slice(0, 3);
+          return y.dailyStars - x.dailyStars;
+        });
 
-    // NOTE - Display leaderboard in Slack channel.
+      // NOTE - Display leaderboard in Slack channel.
 
-    return {
-      statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        response_type: "in_channel",
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: ":star: *Overall Leaderboard* :star:",
+      return {
+        statusCode: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          response_type: "in_channel",
+          blocks: [
+            {
+              type: "header",
+              text: {
+                type: "plain_text",
+                text: ":star: Overall Leaderboard :star:",
+              },
             },
-          },
-          overallLeaders.length > 0
-            ? {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:first_place_medal: ${overallLeaders[0].name} (${overallLeaders[0].stars})`,
-                },
-              }
-            : null,
-          overallLeaders.length > 1
-            ? {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:second_place_medal: ${overallLeaders[1].name} (${overallLeaders[1].stars})`,
-                },
-              }
-            : null,
-          overallLeaders.length > 2
-            ? {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:third_place_medal: ${overallLeaders[2].name} (${overallLeaders[2].stars})`,
-                },
-              }
-            : null,
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `:stopwatch: *Day ${day} Leaderboard* :stopwatch:`,
+            {
+              type: "divider",
             },
-          },
-          dailyLeaders.length > 0
-            ? {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:first_place_medal: ${dailyLeaders[0].name} (${
-                    dailyLeaders[0].dailyStars === 2 ? ":star:" : ":star-empty:"
-                  } ${formatTime(dailyLeaders[0].totalDuration)})`,
-                },
-              }
-            : null,
-          dailyLeaders.length > 1
-            ? {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:second_place_medal: ${dailyLeaders[1].name} (${
-                    dailyLeaders[1].dailyStars === 2 ? ":star:" : ":star-empty:"
-                  } ${formatTime(dailyLeaders[1].totalDuration)})`,
-                },
-              }
-            : null,
-          dailyLeaders.length > 2
-            ? {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:third_place_medal: ${dailyLeaders[2].name} (${
-                    dailyLeaders[2].dailyStars === 2 ? ":star:" : ":star-empty:"
-                  } ${formatTime(dailyLeaders[2].totalDuration)})`,
-                },
-              }
-            : null,
-        ].filter((x) => x !== null),
-      }),
-    };
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: overallLeaders
+                  .map(({ name, stars }, index) => `${formatMedal(index)}${name} (${stars})`)
+                  .join("\n\n"),
+              },
+            },
+            {
+              type: "header",
+              text: {
+                type: "plain_text",
+                text: `:stopwatch: Day ${day} Leaderboard :stopwatch:`,
+              },
+            },
+            {
+              type: "divider",
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: dailyLeaders
+                  .map(
+                    ({ name, dailyStars, totalDuration }, index) =>
+                      `${formatMedal(index)}${name} (${formatStars(dailyStars)} ${formatTime(
+                        totalDuration
+                      )})`
+                  )
+                  .join("\n\n"),
+              },
+            },
+          ],
+        }),
+      };
+    } catch (error) {
+      console.error(error);
+
+      return Promise.resolve({
+        statusCode: 200,
+        body: "Something went wrong. Please try again later.",
+      });
+    }
   });
 
 const handleSlackRequest = (
   event: APIGatewayProxyEvent,
-  callback: (params: URLSearchParams) => ReturnType<APIGatewayProxyHandler>
+  callback: (params: URLSearchParams) => Promise<ProxyResult>
 ) => {
   try {
     verifySlackRequest(event);
@@ -413,6 +382,26 @@ const calculateLeaderboardStatistics = (
     };
   });
 };
+
+const formatMedal = (index: number) => {
+  switch (index) {
+    case 0: {
+      return ":first_place_medal: ";
+    }
+
+    case 1: {
+      return ":second_place_medal: ";
+    }
+
+    case 2: {
+      return ":third_place_medal: ";
+    }
+  }
+
+  return "        ";
+};
+
+const formatStars = (dailyStars: number) => (dailyStars === 2 ? ":star:" : ":star-empty:");
 
 const formatTime = (value: number) => {
   const hours = Math.floor(value / (1000 * 60 * 60));
