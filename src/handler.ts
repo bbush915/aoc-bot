@@ -181,13 +181,7 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
         manualTimings
       );
 
-      const overallLeaders = leaderboardStatistics.sort((x, y) => {
-        if (x.stars === y.stars) {
-          return x.lastStarTimestamp - y.lastStarTimestamp;
-        }
-
-        return y.stars - x.stars;
-      });
+      const overallLeaders = leaderboardStatistics.sort((x, y) => y.localScore - x.localScore);
 
       const dailyLeaders = leaderboardStatistics
         .filter((x) => x.totalDuration > 0)
@@ -224,7 +218,9 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
               text: {
                 type: "mrkdwn",
                 text: overallLeaders
-                  .map(({ name, stars }, index) => `${formatMedal(index)}${name} (${stars})`)
+                  .map(
+                    ({ name, localScore }, index) => `${formatMedal(index)}${name} (${localScore})`
+                  )
                   .join("\n\n"),
               },
             },
@@ -373,6 +369,7 @@ const calculateLeaderboardStatistics = (
 
     return {
       name: member.name,
+      localScore: member.local_score,
       stars,
       dailyStars: (partOneDuration > 0 ? 1 : 0) + (partTwoDuration > 0 ? 1 : 0),
       lastStarTimestamp: Math.min(lastStarTimestamp, cutoffTimestamp),
