@@ -1,12 +1,12 @@
 service: aoc-bot
 
-frameworkVersion: "2"
+frameworkVersion: "3"
 
 useDotenv: true
 
 provider:
   name: aws
-  runtime: nodejs12.x
+  runtime: nodejs16.x
   lambdaHashingVersion: 20201221
   environment:
     AOC_LEADERBOARD_ID: ${env:AOC_LEADERBOARD_ID}
@@ -21,10 +21,11 @@ provider:
           Action:
             - dynamodb:GetItem
             - dynamodb:Query
+            - dynamodb:Scan
             - dynamodb:UpdateItem
           Resource:
-            - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/aoc-user-translation
             - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/aoc-manual-timing
+            - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/aoc-participants
 
 plugins:
   - serverless-plugin-typescript
@@ -54,10 +55,10 @@ functions:
 
 resources:
   Resources:
-    UserTranslationTable:
+    ParticipantTable:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: aoc-user-translation
+        TableName: aoc-participants
         BillingMode: PROVISIONED
         ProvisionedThroughput:
           ReadCapacityUnits: 1
@@ -73,9 +74,12 @@ resources:
           ReadCapacityUnits: 10
           WriteCapacityUnits: 1
         KeySchema:
-          [{ AttributeName: DayNumber, KeyType: HASH }, { AttributeName: MemberId, KeyType: RANGE }]
+          [
+            { AttributeName: DayNumber, KeyType: HASH },
+            { AttributeName: AocId, KeyType: RANGE },
+          ]
         AttributeDefinitions:
           [
             { AttributeName: DayNumber, AttributeType: "N" },
-            { AttributeName: MemberId, AttributeType: "S" },
+            { AttributeName: AocId, AttributeType: "S" },
           ]
