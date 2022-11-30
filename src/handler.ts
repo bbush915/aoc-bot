@@ -83,7 +83,19 @@ export const manualStart: APIGatewayProxyHandler = (event) =>
       const now = new Date().getTime();
 
       const slackId = params.get("user_id")!;
-      const day = params.get("text")! ?? calculateDay(now);
+      const day = params.get("text");
+
+      if (
+        !day ||
+        !Number.isInteger(Number(day)) ||
+        Number(day) < 1 ||
+        Number(day) > 25
+      ) {
+        return Promise.resolve({
+          statusCode: 200,
+          body: "Invalid day specified. Please provide a number between 1 and 25.",
+        });
+      }
 
       // NOTE - Fetch the participant.
 
@@ -220,7 +232,19 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
       const now = new Date().getTime();
 
       const slackId = params.get("user_id")!;
-      const day = params.get("text")! ?? calculateDay(now);
+      const day = params.get("text");
+
+      if (
+        !day ||
+        !Number.isInteger(Number(day)) ||
+        Number(day) < 1 ||
+        Number(day) > 25
+      ) {
+        return Promise.resolve({
+          statusCode: 200,
+          body: "Invalid day specified. Please provide a number between 1 and 25.",
+        });
+      }
 
       // NOTE - Advent of Code asks that you do not request your leaderboard
       // JSON more than once per 15 minutes. To prevent accidental spam by users,
@@ -441,12 +465,6 @@ function verifySlackRequest({ body, headers }: APIGatewayProxyEvent) {
   if (timingSafeEqual(Buffer.from(`v0=${hash}`), Buffer.from(signature))) {
     throw new Error("Request has invalid signature");
   }
-}
-
-function calculateDay(relativeTo: number) {
-  return String(
-    1 + Math.floor((relativeTo - EVENT_START_TIMESTAMP) / (24 * 60 * 60 * 1000))
-  );
 }
 
 function calculateParticipantStatistics(
