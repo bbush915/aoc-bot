@@ -32,6 +32,8 @@ export class LeaderboardService {
       {
         headers: {
           Cookie: `session=${session};`,
+          "User-Agent":
+            "https://github.com/bbush915/aoc-bot by bryan@dialexa.com",
         },
       }
     );

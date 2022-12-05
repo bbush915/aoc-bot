@@ -141,7 +141,7 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `Here are the *Advent of Code* results and leaderboard for *{{ year }} Day {{ day }}*!`,
+        text: `Here are the *Advent of Code* results and leaderboard as of *Day {{ day }}*. Congratulations to the participants who solved one or both parts of the challenge!`,
       },
     },
     {
@@ -178,15 +178,6 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
       },
     },
     {
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: "Congratulations to these participants who completed one or both parts of the challenge!",
-        },
-      ],
-    },
-    {
       type: "divider",
     },
     {
@@ -205,11 +196,29 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
       },
     },
     {
+      type: "divider",
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "{{ competitiveDailyLeaderboard }}",
+      },
+    },
+    {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: ":christmas_tree:  Overall Leaderboard",
+        emoji: true,
+      },
+    },
+    {
       type: "context",
       elements: [
         {
           type: "mrkdwn",
-          text: "The overall leaderboard is determined by the total number of stars. Ties will be broken using total duration as of December 25th at 12 CST.",
+          text: "The overall leaderboard is determined by the total number of stars earned by a participant. Ties will be broken using the total duration as of December 25th at 12 CST. Fun division participants are denoted with a *.",
         },
       ],
     },
@@ -220,7 +229,7 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "*Daily Leaderboard*\n\n{{ competitiveDailyLeaderboard }}\n\n\n*Overall Leaderboard*\n\n{{ competitiveOverallLeaderboard }}",
+        text: "{{ overallLeaderboard }}",
       },
     },
   ],
@@ -353,8 +362,10 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
         competitiveDailyLeaderboard = "-";
       }
 
-      const competitiveStarGroups = participantStatistics
-        .filter((x) => x.division === Divisions.COMPETITIVE)
+      // NOTE - Overall leaderboard.
+
+      const overallStarGroups = participantStatistics
+        .filter((x) => x.stars > 0)
         .reduce<
           Record<string, ReturnType<typeof calculateParticipantStatistics>>
         >((starGroups, statistics) => {
@@ -366,7 +377,7 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
           return starGroups;
         }, {});
 
-      let competitiveOverallLeaderboard = Object.entries(competitiveStarGroups)
+      let overallLeaderboard = Object.entries(overallStarGroups)
         .sort(([xStars], [yStars]) => Number(yStars) - Number(xStars))
         .map(([stars, participantStatistics], i, starGroups) => {
           const rank =
@@ -377,13 +388,13 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
 
           return `${rank}. ${participantStatistics
             .sort((x, y) => x.sortKey.localeCompare(y.sortKey))
-            .map((x) => x.name)
+            .map((x) => `${x.name}${x.division === Divisions.FUN ? "*" : ""}`)
             .join(", ")} (${stars})`;
         })
         .join("\n\n");
 
-      if (competitiveOverallLeaderboard.length === 0) {
-        competitiveOverallLeaderboard = "-";
+      if (overallLeaderboard.length === 0) {
+        overallLeaderboard = "-";
       }
 
       // NOTE - Display leaderboard in Slack channel.
@@ -402,10 +413,7 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
             "{{ competitiveDailyLeaderboard }}",
             competitiveDailyLeaderboard
           )
-          .replaceAll(
-            "{{ competitiveOverallLeaderboard }}",
-            competitiveOverallLeaderboard
-          ),
+          .replaceAll("{{ overallLeaderboard }}", overallLeaderboard),
       };
     } catch (error) {
       console.error(error);
