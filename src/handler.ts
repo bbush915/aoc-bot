@@ -218,7 +218,7 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
       elements: [
         {
           type: "mrkdwn",
-          text: "The overall leaderboard is determined by the total number of stars earned by a participant. Ties will be broken using the total duration as of December 25th at 12 CST. Fun division participants are denoted with a *.",
+          text: "The overall leaderboard is determined by the total number of stars earned by a participant. Ties will be broken using the total duration as of December 25th at 12 CST. Competitive division participants are denoted with a *",
         },
       ],
     },
@@ -388,7 +388,10 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
 
           return `${rank}. ${participantStatistics
             .sort((x, y) => x.sortKey.localeCompare(y.sortKey))
-            .map((x) => `${x.name}${x.division === Divisions.FUN ? "*" : ""}`)
+            .map(
+              (x) =>
+                `${x.name}${x.division === Divisions.COMPETITIVE ? "*" : ""}`
+            )
             .join(", ")} (${stars})`;
         })
         .join("\n\n");
