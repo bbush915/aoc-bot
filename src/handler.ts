@@ -390,7 +390,7 @@ export const leaderboard: APIGatewayProxyHandler = (event) =>
             .sort((x, y) => x.sortKey.localeCompare(y.sortKey))
             .map(
               (x) =>
-                `${x.name}${x.division === Divisions.COMPETITIVE ? `\*` : ""}`
+                `${x.name}${x.division === Divisions.COMPETITIVE ? "­*­" : ""}`
             )
             .join(", ")} (${stars})`;
         })
