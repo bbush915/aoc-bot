@@ -6,7 +6,9 @@ const configuration = {
   },
   slack: {
     aocAdminId: process.env.SLACK_AOC_ADMIN_ID!,
+    appId: process.env.SLACK_APP_ID!,
     signingSecret: process.env.SLACK_SIGNING_SECRET!,
+    token: process.env.SLACK_TOKEN!,
   },
 };
 

@@ -3,6 +3,7 @@ import {
   APIGatewayProxyHandler,
   ProxyResult,
 } from "aws-lambda";
+import { WebClient as SlackClient } from "@slack/web-api";
 import { createHmac, timingSafeEqual } from "crypto";
 
 import configuration from "./configuration";
@@ -30,39 +31,119 @@ const EVENT_START_TIMESTAMP = new Date(
   0
 ).getTime();
 
-export const register: APIGatewayProxyHandler = (event) =>
-  handleSlackRequest(event, async (params) => {
-    try {
-      const slackId = params.get("user_id")!;
-      const [aocId, division] = params.get("text")!.split(" ");
+export const initiateRegistration: APIGatewayProxyHandler = async (event) =>
+  await handleSlackRequest(event, async (params) => {
+    const slackId = params.get("user_id")!;
+    const triggerId = params.get("trigger_id")!;
 
-      if (!Object.values<string>(Divisions).includes(division)) {
-        return Promise.resolve({
-          statusCode: 200,
-          body: "Invalid division specified. Specify either 'fun' or 'competitive'",
-        });
+    const participantService = new ParticipantService();
+
+    await participantService.openRegistrationModal(triggerId, slackId);
+
+    return {
+      statusCode: 200,
+      body: "",
+    };
+  });
+
+export const handleInteraction: APIGatewayProxyHandler = async (event) =>
+  await handleSlackRequest(event, async (params) => {
+    const payload = JSON.parse(params.get("payload")!);
+
+    switch (payload.type) {
+      case "message_action": {
+        switch (payload.callback_id) {
+          case "refresh-leaderboard": {
+            const user = payload.user;
+
+            if (user.id !== configuration.slack.aocAdminId) {
+              return {
+                statusCode: 200,
+                body: "Due to API restrictions, only your Advent of Code facilitator can perform this action",
+              };
+            }
+
+            // NOTE - Grab day number from mesage.
+
+            const day =
+              payload.message.blocks[0].text.text.match(/Day (\d+)/)[1];
+
+            // NOTE - Update leaderboard.
+
+            const slackClient = new SlackClient(configuration.slack.token);
+
+            const blocks = await getLeaderboardBlocks(day);
+
+            await slackClient.chat.update({
+              ts: payload.message_ts,
+              channel: payload.channel.id,
+              blocks,
+            });
+
+            break;
+          }
+
+          default: {
+            throw new Error(`Unhandled callback: ${payload.callback_id}`);
+          }
+        }
+
+        break;
       }
 
-      const participantService = new ParticipantService();
+      case "view_submission": {
+        const view = payload.view;
+        const meta = JSON.parse(view.private_metadata);
 
-      await participantService.upsert({
-        slackId,
-        aocId,
-        division: division as Divisions,
-      });
+        switch (meta.type) {
+          case "REGISTRATION": {
+            const { slackId } = meta.data;
 
-      return {
-        statusCode: 200,
-        body: "Registered successfully!",
-      };
-    } catch (error) {
-      console.error(error);
+            const {
+              aoc_id_block: {
+                aoc_id: { value: aocId },
+              },
+              division_block: {
+                division: {
+                  selected_option: { value: division },
+                },
+              },
+              ai_usage_type_block: {
+                ai_usage_type: {
+                  selected_option: { value: aiUsageType },
+                },
+              },
+            } = view.state.values;
 
-      return Promise.resolve({
-        statusCode: 200,
-        body: "Something went wrong. Please try again later.",
-      });
+            var participantService = new ParticipantService();
+
+            await participantService.upsert({
+              slackId,
+              aocId,
+              division,
+              aiUsageType,
+            });
+
+            break;
+          }
+
+          default: {
+            throw new Error(`Unknown view type: ${meta.type}`);
+          }
+        }
+
+        break;
+      }
+
+      default: {
+        throw new Error(`Unhandled payload type: ${payload.type}`);
+      }
     }
+
+    return {
+      statusCode: 200,
+      body: "",
+    };
   });
 
 const MANUAL_START_RESPONSE_TEMPLATE = JSON.stringify({
@@ -77,65 +158,55 @@ const MANUAL_START_RESPONSE_TEMPLATE = JSON.stringify({
   ],
 });
 
-export const manualStart: APIGatewayProxyHandler = (event) =>
-  handleSlackRequest(event, async (params) => {
-    try {
-      const now = new Date().getTime();
+export const manualStart: APIGatewayProxyHandler = async (event) =>
+  await handleSlackRequest(event, async (params) => {
+    const now = new Date().getTime();
 
-      const slackId = params.get("user_id")!;
-      const day = params.get("text");
+    const slackId = params.get("user_id")!;
+    const day = params.get("text");
 
-      if (
-        !day ||
-        !Number.isInteger(Number(day)) ||
-        Number(day) < 1 ||
-        Number(day) > 25
-      ) {
-        return Promise.resolve({
-          statusCode: 200,
-          body: "Invalid day specified. Please provide a number between 1 and 25.",
-        });
-      }
-
-      // NOTE - Fetch the participant.
-
-      const participantService = new ParticipantService();
-
-      const participant = await participantService.get(slackId);
-
-      // NOTE - Record their start time.
-
-      const manualTimingService = new ManualTimingService();
-
-      await manualTimingService.upsert({
-        day,
-        aocId: participant.aocId,
-        startTimestamp: now,
-      });
-
-      // NOTE - Tell the participant to begin.
-
-      return {
-        statusCode: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: MANUAL_START_RESPONSE_TEMPLATE.replaceAll("{{ day }}", day)
-          .replaceAll("{{ year }}", configuration.aoc.year)
-          .replaceAll("{{ timestamp }}", String(Math.floor(now / 1000))),
-      };
-    } catch (error) {
-      console.error(error);
-
+    if (
+      !day ||
+      !Number.isInteger(Number(day)) ||
+      Number(day) < 1 ||
+      Number(day) > 25
+    ) {
       return Promise.resolve({
         statusCode: 200,
-        body: "Something went wrong. Please try again later.",
+        body: "Invalid day specified. Please provide a number between 1 and 25.",
       });
     }
+
+    // NOTE - Fetch the participant.
+
+    const participantService = new ParticipantService();
+
+    const participant = await participantService.get(slackId);
+
+    // NOTE - Record their start time.
+
+    const manualTimingService = new ManualTimingService();
+
+    await manualTimingService.upsert({
+      day,
+      aocId: participant.aocId,
+      startTimestamp: now,
+    });
+
+    // NOTE - Tell the participant to begin.
+
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: MANUAL_START_RESPONSE_TEMPLATE.replaceAll("{{ day }}", day)
+        .replaceAll("{{ year }}", configuration.aoc.year)
+        .replaceAll("{{ timestamp }}", String(Math.floor(now / 1000))),
+    };
   });
 
 const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
-  response_type: "in_channel",
   blocks: [
     {
       type: "section",
@@ -235,200 +306,52 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
   ],
 });
 
-export const leaderboard: APIGatewayProxyHandler = (event) =>
-  handleSlackRequest(event, async (params) => {
-    try {
-      const now = new Date().getTime();
+export const leaderboard: APIGatewayProxyHandler = async (event) =>
+  await handleSlackRequest(event, async (params) => {
+    const slackId = params.get("user_id")!;
+    const day = params.get("text");
 
-      const slackId = params.get("user_id")!;
-      const day = params.get("text");
-
-      if (
-        !day ||
-        !Number.isInteger(Number(day)) ||
-        Number(day) < 1 ||
-        Number(day) > 25
-      ) {
-        return Promise.resolve({
-          statusCode: 200,
-          body: "Invalid day specified. Please provide a number between 1 and 25.",
-        });
-      }
-
-      // NOTE - Advent of Code asks that you do not request your leaderboard
-      // JSON more than once per 15 minutes. To prevent accidental spam by users,
-      // this command is locked down to the specified admin user ("facilitator").
-
-      if (slackId !== configuration.slack.aocAdminId) {
-        return {
-          statusCode: 200,
-          body: "Due to API restrictions, only your Advent of Code facilitator can use this command",
-        };
-      }
-
-      // NOTE - Fetch the leaderboard.
-
-      const leaderboardService = new LeaderboardService();
-      const leaderboard = await leaderboardService.get();
-
-      // NOTE - Fetch any manual timing for the day and create a lookup.
-
-      const manualTimingService = new ManualTimingService();
-      const manualTimings = await manualTimingService.getAllByDay(day);
-
-      const manualTimingLookup = manualTimings.reduce(
-        (lookup, manualTiming) => {
-          lookup.set(manualTiming.aocId, manualTiming);
-          return lookup;
-        },
-        new Map<string, ManualTiming>()
-      );
-
-      // NOTE - Fetch participants and create a lookup.
-
-      const participantService = new ParticipantService();
-      const participants = await participantService.getAll();
-
-      const participantLookup = participants.reduce((lookup, participant) => {
-        lookup.set(participant.aocId, participant);
-        return lookup;
-      }, new Map<string, Participant>());
-
-      // NOTE - Calculate leaderboard statistics.
-
-      const participantStatistics = calculateParticipantStatistics(
-        leaderboard,
-        Number(day),
-        manualTimingLookup,
-        participantLookup
-      );
-
-      // NOTE - Fun division.
-
-      let funBothParts = participantStatistics
-        .filter((x) => x.division === Divisions.FUN && x.dailyStars === 2)
-        .sort((x, y) => {
-          if (x.stars === y.stars) {
-            return x.sortKey.localeCompare(y.sortKey);
-          }
-
-          return y.stars - x.stars;
-        })
-        .map((x) => `${x.name} (${x.stars})`)
-        .join(", ");
-
-      if (funBothParts.length === 0) {
-        funBothParts = "-";
-      }
-
-      let funFirstPart = participantStatistics
-        .filter((x) => x.division === Divisions.FUN && x.dailyStars === 1)
-        .sort((x, y) => {
-          if (x.stars === y.stars) {
-            return x.sortKey.localeCompare(y.sortKey);
-          }
-
-          return y.stars - x.stars;
-        })
-        .map((x) => `${x.name} (${x.stars})`)
-        .join(", ");
-
-      if (funFirstPart.length === 0) {
-        funFirstPart = "-";
-      }
-
-      // NOTE - Competitive division.
-
-      let competitiveDailyLeaderboard = participantStatistics
-        .filter(
-          (x) => x.division === Divisions.COMPETITIVE && x.totalDuration > 0
-        )
-        .sort((x, y) => {
-          if (x.dailyStars === y.dailyStars) {
-            return x.totalDuration - y.totalDuration;
-          }
-
-          return y.dailyStars - x.dailyStars;
-        })
-        .map(
-          (x, i) =>
-            `${i + 1}. ${x.name} (${formatStar(x.dailyStars)}, ${formatTime(
-              x.totalDuration
-            )})`
-        )
-        .join("\n\n");
-
-      if (competitiveDailyLeaderboard.length === 0) {
-        competitiveDailyLeaderboard = "-";
-      }
-
-      // NOTE - Overall leaderboard.
-
-      const overallStarGroups = participantStatistics
-        .filter((x) => x.stars > 0)
-        .reduce<
-          Record<string, ReturnType<typeof calculateParticipantStatistics>>
-        >((starGroups, statistics) => {
-          if (!starGroups[statistics.stars]) {
-            starGroups[statistics.stars] = [];
-          }
-
-          starGroups[statistics.stars].push(statistics);
-          return starGroups;
-        }, {});
-
-      let overallLeaderboard = Object.entries(overallStarGroups)
-        .sort(([xStars], [yStars]) => Number(yStars) - Number(xStars))
-        .map(([stars, participantStatistics], i, starGroups) => {
-          const rank =
-            starGroups
-              .slice(0, i)
-              .map((x) => x[1].length)
-              .reduce((sum, cur) => (sum += cur), 0) + 1;
-
-          return `${rank}. ${participantStatistics
-            .sort((x, y) => x.sortKey.localeCompare(y.sortKey))
-            .map(
-              (x) =>
-                `${x.name}${x.division === Divisions.COMPETITIVE ? "­*­" : ""}`
-            )
-            .join(", ")} (${stars})`;
-        })
-        .join("\n\n");
-
-      if (overallLeaderboard.length === 0) {
-        overallLeaderboard = "-";
-      }
-
-      // NOTE - Display leaderboard in Slack channel.
-
-      return {
-        statusCode: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: LEADERBOARD_RESPONSE_TEMPLATE.replaceAll("{{ day }}", day)
-          .replaceAll("{{ year }}", configuration.aoc.year)
-          .replaceAll("{{ leaderboardId }}", configuration.aoc.leaderboardId)
-          .replaceAll("{{ funBothParts }}", funBothParts)
-          .replaceAll("{{ funFirstPart }}", funFirstPart)
-          .replaceAll(
-            "{{ competitiveDailyLeaderboard }}",
-            competitiveDailyLeaderboard
-          )
-          .replaceAll("{{ overallLeaderboard }}", overallLeaderboard),
-      };
-    } catch (error) {
-      console.error(error);
-
+    if (
+      !day ||
+      !Number.isInteger(Number(day)) ||
+      Number(day) < 1 ||
+      Number(day) > 25
+    ) {
       return Promise.resolve({
         statusCode: 200,
-        body: "Something went wrong. Please try again later.",
+        body: "Invalid day specified. Please provide a number between 1 and 25.",
       });
     }
+
+    // NOTE - Advent of Code asks that you do not request your leaderboard
+    // JSON more than once per 15 minutes. To prevent accidental spam by users,
+    // this command is locked down to the specified admin user ("facilitator").
+
+    if (slackId !== configuration.slack.aocAdminId) {
+      return {
+        statusCode: 200,
+        body: "Due to API restrictions, only your Advent of Code facilitator can use this command",
+      };
+    }
+
+    // NOTE - Display leaderboard in Slack channel.
+
+    const blocks = await getLeaderboardBlocks(day);
+
+    const slackClient = new SlackClient(configuration.slack.token);
+
+    await slackClient.chat.postMessage({
+      channel: params.get("channel_id")!,
+      blocks,
+    });
+
+    return {
+      statusCode: 200,
+      body: "",
+    };
   });
 
-function handleSlackRequest(
+async function handleSlackRequest(
   event: APIGatewayProxyEvent,
   callback: (params: URLSearchParams) => Promise<ProxyResult>
 ) {
@@ -443,14 +366,16 @@ function handleSlackRequest(
 
     // NOTE - Execute the callback for the given parameters.
 
-    return callback(params);
+    var response = await callback(params);
+
+    return response;
   } catch (error) {
     console.error(error);
 
     return Promise.resolve({
       statusCode: 200,
       body: "Something went wrong. Please try again later.",
-    }) as ReturnType<APIGatewayProxyHandler>;
+    });
   }
 }
 
@@ -476,6 +401,153 @@ function verifySlackRequest({ body, headers }: APIGatewayProxyEvent) {
   if (timingSafeEqual(Buffer.from(`v0=${hash}`), Buffer.from(signature))) {
     throw new Error("Request has invalid signature");
   }
+}
+
+async function getLeaderboardBlocks(day: string) {
+  // NOTE - Fetch the leaderboard.
+
+  const leaderboardService = new LeaderboardService();
+  const leaderboard = await leaderboardService.get();
+
+  // NOTE - Fetch any manual timing for the day and create a lookup.
+
+  const manualTimingService = new ManualTimingService();
+  const manualTimings = await manualTimingService.getAllByDay(day);
+
+  const manualTimingLookup = manualTimings.reduce((lookup, manualTiming) => {
+    lookup.set(manualTiming.aocId, manualTiming);
+    return lookup;
+  }, new Map<string, ManualTiming>());
+
+  // NOTE - Fetch participants and create a lookup.
+
+  const participantService = new ParticipantService();
+  const participants = await participantService.getAll();
+
+  const participantLookup = participants.reduce((lookup, participant) => {
+    lookup.set(participant.aocId, participant);
+    return lookup;
+  }, new Map<string, Participant>());
+
+  // NOTE - Calculate leaderboard statistics.
+
+  const participantStatistics = calculateParticipantStatistics(
+    leaderboard,
+    Number(day),
+    manualTimingLookup,
+    participantLookup
+  );
+
+  // NOTE - Fun division.
+
+  let funBothParts = participantStatistics
+    .filter((x) => x.division === Divisions.FUN && x.dailyStars === 2)
+    .sort((x, y) => {
+      if (x.stars === y.stars) {
+        return x.sortKey.localeCompare(y.sortKey);
+      }
+
+      return y.stars - x.stars;
+    })
+    .map((x) => `${x.name} (${x.stars})`)
+    .join(", ");
+
+  if (funBothParts.length === 0) {
+    funBothParts = "-";
+  }
+
+  let funFirstPart = participantStatistics
+    .filter((x) => x.division === Divisions.FUN && x.dailyStars === 1)
+    .sort((x, y) => {
+      if (x.stars === y.stars) {
+        return x.sortKey.localeCompare(y.sortKey);
+      }
+
+      return y.stars - x.stars;
+    })
+    .map((x) => `${x.name} (${x.stars})`)
+    .join(", ");
+
+  if (funFirstPart.length === 0) {
+    funFirstPart = "-";
+  }
+
+  // NOTE - Competitive division.
+
+  let competitiveDailyLeaderboard = participantStatistics
+    .filter((x) => x.division === Divisions.COMPETITIVE && x.totalDuration > 0)
+    .sort((x, y) => {
+      if (x.dailyStars === y.dailyStars) {
+        return x.totalDuration - y.totalDuration;
+      }
+
+      return y.dailyStars - x.dailyStars;
+    })
+    .map(
+      (x, i) =>
+        `${i + 1}. ${x.name} (${formatStar(x.dailyStars)}, ${formatTime(
+          x.totalDuration
+        )})`
+    )
+    .join("\\n\\n");
+
+  if (competitiveDailyLeaderboard.length === 0) {
+    competitiveDailyLeaderboard = "-";
+  }
+
+  // NOTE - Overall leaderboard.
+
+  const overallStarGroups = participantStatistics
+    .filter((x) => x.stars > 0)
+    .reduce<Record<string, ReturnType<typeof calculateParticipantStatistics>>>(
+      (starGroups, statistics) => {
+        if (!starGroups[statistics.stars]) {
+          starGroups[statistics.stars] = [];
+        }
+
+        starGroups[statistics.stars].push(statistics);
+        return starGroups;
+      },
+      {}
+    );
+
+  let overallLeaderboard = Object.entries(overallStarGroups)
+    .sort(([xStars], [yStars]) => Number(yStars) - Number(xStars))
+    .map(([stars, participantStatistics], i, starGroups) => {
+      const rank =
+        starGroups
+          .slice(0, i)
+          .map((x) => x[1].length)
+          .reduce((sum, cur) => (sum += cur), 0) + 1;
+
+      return `${rank}. ${participantStatistics
+        .sort((x, y) => x.sortKey.localeCompare(y.sortKey))
+        .map(
+          (x) =>
+            `${x.name}${
+              x.division === Divisions.COMPETITIVE ? "\\u00ad*\\u00ad" : ""
+            }`
+        )
+        .join(", ")} (${stars})`;
+    })
+    .join("\\n\\n");
+
+  if (overallLeaderboard.length === 0) {
+    overallLeaderboard = "-";
+  }
+
+  return JSON.parse(
+    LEADERBOARD_RESPONSE_TEMPLATE.replaceAll("{{ day }}", day)
+      .replaceAll("{{ year }}", configuration.aoc.year)
+      .replaceAll("{{ leaderboardId }}", configuration.aoc.leaderboardId)
+      .replaceAll("{{ funBothParts }}", funBothParts)
+      .replaceAll("{{ funFirstPart }}", funFirstPart)
+      .replaceAll(
+        "{{ competitiveDailyLeaderboard }}",
+        competitiveDailyLeaderboard
+      )
+      .replaceAll("{{ overallLeaderboard }}", overallLeaderboard)
+  ).blocks;
 }
 
 function calculateParticipantStatistics(

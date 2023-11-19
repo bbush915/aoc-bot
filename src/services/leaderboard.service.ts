@@ -39,6 +39,7 @@ export class LeaderboardService {
     );
 
     const leaderboard: Leaderboard = response.data;
+
     return leaderboard;
   }
 }

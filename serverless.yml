@@ -6,14 +6,16 @@ useDotenv: true
 
 provider:
   name: aws
-  runtime: nodejs16.x
+  runtime: nodejs18.x
   lambdaHashingVersion: 20201221
   environment:
     AOC_LEADERBOARD_ID: ${env:AOC_LEADERBOARD_ID}
     AOC_SESSION_COOKIE: ${env:AOC_SESSION_COOKIE}
     AOC_YEAR: ${env:AOC_YEAR}
     SLACK_AOC_ADMIN_ID: ${env:SLACK_AOC_ADMIN_ID}
+    SLACK_APP_ID: ${env:SLACK_APP_ID}
     SLACK_SIGNING_SECRET: ${env:SLACK_SIGNING_SECRET}
+    SLACK_TOKEN: ${env:SLACK_TOKEN}
   iam:
     role:
       statements:
@@ -31,12 +33,19 @@ plugins:
   - serverless-plugin-typescript
 
 functions:
-  register:
-    name: ${sls:stage}-register
-    handler: src/handler.register
+  initiateRegistration:
+    name: ${sls:stage}-inititate-registration
+    handler: src/handler.initiateRegistration
     events:
       - httpApi:
-          path: /aoc/register
+          path: /aoc/initiate-registration
+          method: post
+  handleInteraction:
+    name: ${sls:stage}-handle-interaction
+    handler: src/handler.handleInteraction
+    events:
+      - httpApi:
+          path: /aoc/handle-interaction
           method: post
   manualStart:
     name: ${sls:stage}-manual-start
