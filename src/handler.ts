@@ -303,6 +303,18 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
         text: "{{ overallLeaderboard }}",
       },
     },
+    {
+      type: "divider",
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "_Last Updated: <!date^{{ timestamp }}^{date} {time_secs}|Unable to Parse Timestamp>_",
+        },
+      ],
+    },
   ],
 });
 
@@ -547,6 +559,10 @@ async function getLeaderboardBlocks(day: string) {
         competitiveDailyLeaderboard
       )
       .replaceAll("{{ overallLeaderboard }}", overallLeaderboard)
+      .replaceAll(
+        "{{ timestamp }}",
+        String(Math.floor(new Date().getTime() / 1000))
+      )
   ).blocks;
 }
 
