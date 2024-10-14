@@ -1,0 +1,8 @@
+{
+   "imports": {
+      "@slack/web-api": "npm:@slack/web-api@7.5.0",
+      "@supabase/supabase-js": "jsr:@supabase/supabase-js@2.45.4",
+      "buffer": "node:buffer",
+      "crypto": "node:crypto"
+   }
+}
