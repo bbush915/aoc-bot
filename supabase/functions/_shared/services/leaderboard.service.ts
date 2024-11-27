@@ -32,7 +32,7 @@ const LEADERBOARD_RESPONSE_TEMPLATE = JSON.stringify({
                         emoji: true,
                     },
                     value: "full_leaderboard",
-                    url: `https://adventofcode.com/{{ year }}/leaderboard/private/view/{{ leaderboardId }}`,
+                    url: `https://adventofcode.com/{{ year }}/leaderboard/private/view/{{ leaderboardId }}?order=stars`,
                 },
             ],
         },
