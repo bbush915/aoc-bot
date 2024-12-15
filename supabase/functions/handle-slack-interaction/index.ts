@@ -53,6 +53,25 @@ Deno.serve(
                 break;
               }
 
+              case CallbackTypes.DELETE_LEADERBOARD: {
+                const user = payload.user;
+
+                if (user.id !== Deno.env.get("SLACK_AOC_ADMIN_ID")!) {
+                  return new Response(
+                    "Only your Advent of Code facilitator can perform this action.",
+                  );
+                }
+
+                const slackService = new SlackService();
+
+                await slackService.deleteMessage(
+                  payload.channel.id,
+                  payload.message_ts
+                );
+
+                break;
+              }
+
               default: {
                 throw new Error(`Unhandled callback: ${payload.callback_id}`);
               }

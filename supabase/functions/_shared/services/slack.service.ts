@@ -22,6 +22,13 @@ export class SlackService {
         });
     }
 
+    async deleteMessage(channelId: string, timestamp: string) {
+        await this._client.chat.delete({
+            channel: channelId,
+            ts: timestamp
+        });
+    }
+
     async openRegistrationModal(triggerId: string, slackId: string) {
         await this._client.views.open({
             trigger_id: triggerId,

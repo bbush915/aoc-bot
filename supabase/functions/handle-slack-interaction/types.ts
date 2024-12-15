@@ -6,6 +6,7 @@ export enum PayloadTypes {
 
 export enum CallbackTypes {
     REFRESH_LEADERBOARD = "refresh-leaderboard",
+    DELETE_LEADERBOARD = 'delete-leaderboard'
 }
 
 export enum ViewTypes {
